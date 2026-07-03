@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<link rel="icon" type="image/jpeg" href="logo.jpg">
+<link rel="apple-touch-icon" href="logo.jpg">
+<link rel="shortcut icon" href="logo.jpg">
+<link rel="manifest" href="manifest.json">
+<title>BABAYAGA - Processing</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<style>
+  :root{--green:#00ff66;--green-dim:#00cc55;--black:#000;--panel:#0a0f0c;--border:#163322;--grey:#7d9488;}
+  *{box-sizing:border-box;}
+  html,body{margin:0;background:var(--black);color:#fff;font-family:-apple-system,Segoe UI,Roboto,sans-serif;height:100%;}
+  body{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;min-height:100dvh;gap:18px;padding:20px;}
+  .logo-ring{width:110px;height:110px;border:3px solid var(--green);border-radius:50%;display:flex;align-items:center;justify-content:center;box-shadow:0 0 30px rgba(0,255,102,.5);animation:pulse 2s ease-in-out infinite;}
+  @keyframes pulse{0%,100%{box-shadow:0 0 18px rgba(0,255,102,.4);}50%{box-shadow:0 0 36px rgba(0,255,102,.8);}}
+  .logo-letter{font-size:50px;font-weight:900;color:var(--green);font-family:Georgia,serif;font-style:italic;}
+  .brand{font-size:22px;font-weight:900;letter-spacing:3px;color:var(--green);text-shadow:0 0 14px rgba(0,255,102,.7);}
+  #status{color:var(--grey);font-size:13px;text-align:center;min-height:40px;}
+  #status b{color:var(--green);}
+  .progress-bar{width:240px;height:6px;background:#0d1310;border-radius:4px;overflow:hidden;border:1px solid var(--border);}
+  .progress-fill{height:100%;width:0%;background:linear-gradient(90deg,var(--green-dim),var(--green));transition:width .3s;}
+  .log{width:100%;max-width:360px;font-size:10px;color:#4a5a50;text-align:left;max-height:120px;overflow-y:auto;font-family:monospace;}
+</style>
+</head>
+<body>
+<div class="logo-ring"><div class="logo-letter">B</div></div>
+<div class="brand">BABAYAGA</div>
+<div id="status">Preparing analysis...</div>
+<div class="progress-bar"><div class="progress-fill" id="fill"></div></div>
+<div class="log" id="log"></div>
+
+<script>
+const SIM_RUNS = 10000;
+
+function log(msg){
+  const el = document.getElementById('log');
+  el.innerHTML += msg + '<br>';
+  el.scrollTop = el.scrollHeight;
+}
+function setStatus(msg){ document.getElementById('status').innerHTML = msg; }
+function setProgress(pct){ document.getElementById('fill').style.width = pct + '%'; }
+
+/* ---------------- WEATHER (Open-Meteo, free, no key) ---------------- */
+async function getWeather(venueOrCity, timestamp){
+  if(!venueOrCity) return null;
+  try{
+    const geo = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(venueOrCity)}&count=1`);
+    const geoJson = await geo.json();
+    if(!geoJson.results || !geoJson.results.length) return null;
+    const { latitude, longitude } = geoJson.results[0];
+
+    const date = timestamp ? new Date(timestamp * 1000) : new Date();
+    const dateStr = date.toISOString().split('T')[0];
+
+    const wx = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&hourly=temperature_2m,precipitation,wind_speed_10m&start_date=${dateStr}&end_date=${dateStr}`);
+    const wxJson = await wx.json();
+    if(!wxJson.hourly) return null;
+
+    const hour = date.getUTCHours();
+    return {
+      temp: wxJson.hourly.temperature_2m ? wxJson.hourly.temperature_2m[hour] : null,
+      precipitation: wxJson.hourly.precipitation ? wxJson.hourly.precipitation[hour] : null,
+      wind: wxJson.hourly.wind_speed_10m ? wxJson.hourly.wind_speed_10m[hour] : null
+    };
+  } catch(err){ return null; }
+}
+
+/* ---------------- PDF ODDS EXTRACTION ---------------- */
+async function extractOddsFromPDF(dataUrl){
+  try{
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    const base64 = dataUrl.split(',')[1];
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for(let i=0;i<binary.length;i++) bytes[i] = binary.charCodeAt(i);
+
+    const pdf = await pdfjsLib.getDocument({ data: bytes }).promise;
+    let fullText = '';
+    for(let p = 1; p <= pdf.numPages; p++){
+      const page = await pdf.getPage(p);
+      const content = await page.getTextContent();
+      fullText += content.items.map(i => i.str).join(' ') + '\n';
+    }
+    return parseOddsText(fullText);
+  } catch(err){
+    return null;
+  }
+}
+
+function parseOddsText(text){
+  const odds = {};
+
+  // 1X2
+  let m = text.match(/1X2[\s\S]{0,60}?Home\s*([\d.]+)\s*Draw\s*([\d.]+)\s*Away\s*([\d.]+)/i);
+  if(m) odds.home1x2 = parseFloat(m[1]), odds.draw1x2 = parseFloat(m[2]), odds.away1x2 = parseFloat(m[3]);
+
+  // Over/Under main line (2.5)
+  m = text.match(/Over\/Under[\s\S]{0,40}?2\.5[\s\S]{0,30}?([\d.]+)\s*[\s\S]{0,10}?([\d.]+)/i);
+  if(m) odds.over25 = parseFloat(m[1]), odds.under25 = parseFloat(m[2]);
+
+  // GG/NG (BTTS)
+  m = text.match(/GG\/NG[\s\S]{0,40}?Yes\s*([\d.]+)\s*No\s*([\d.]+)/i);
+  if(m) odds.bttsYes = parseFloat(m[1]), odds.bttsNo = parseFloat(m[2]);
+
+  // Handicap
+  m = text.match(/Handicap[\s\S]{0,60}?([\d.]+)\s*([\d.]+)\s*([\d.]+)/i);
+  if(m) odds.handicapHome = parseFloat(m[1]), odds.handicapDraw = parseFloat(m[2]), odds.handicapAway = parseFloat(m[3]);
+
+  // Team-specific Over/Under (proxy for home/away Over 1.5)
+  const teamOU = [...text.matchAll(/([\w\s]+?)\s+Over\/Under[\s\S]{0,15}?([\d.]+)[\s\S]{0,15}?([\d.]+)\s*([\d.]+)/gi)];
+  if(teamOU.length >= 2){
+    odds.homeTeamOver = parseFloat(teamOU[0][3]);
+    odds.homeTeamUnder = parseFloat(teamOU[0][4]);
+    odds.awayTeamOver = parseFloat(teamOU[1][3]);
+    odds.awayTeamUnder = parseFloat(teamOU[1][4]);
+  }
+
+  return Object.keys(odds).length ? odds : null;
+}
+
+/* ---------------- CPF ENGINE (steps 1-8, using extracted odds) ---------------- */
+function impliedProb(odds){ return odds ? (1/odds) : null; }
+
+function runCPF(odds){
+  if(!odds) return { approved: [], notes: ['No odds could be extracted from upload'] };
+
+  const approved = [];
+  const notes = [];
+
+  // Rule 1: Over 1.5 approval (using team-specific O/U as proxy since exact 1.5 line not always present)
+  if(odds.homeTeamOver && odds.awayTeamOver){
+    if(odds.homeTeamOver <= 1.80 && odds.awayTeamOver <= 1.80){
+      approved.push({ market: 'Over 1.5', odds: odds.over25 || odds.homeTeamOver, rule: 'Rule 1' });
+    } else {
+      notes.push('Over 1.5 rejected — team O/U odds exceed 1.80 threshold');
+    }
+    // Rule 2: Away Over 1.5 >= 2.50 -> Home Handicap 2:0
+    if(odds.awayTeamOver >= 2.50 && odds.handicapHome){
+      approved.push({ market: 'Home Handicap 2:0', odds: odds.handicapHome, rule: 'Rule 2' });
+    }
+  }
+
+  // Rule 3: Away Over 0.5 >= 1.50 -> Home Double Chance (using 1X2 implied as rough proxy if no direct 0.5 line)
+  if(odds.away1x2 && odds.away1x2 >= 1.50 && odds.home1x2){
+    const dcOdds = 1 / (impliedProb(odds.home1x2) + impliedProb(odds.draw1x2));
+    approved.push({ market: 'Home Double Chance', odds: parseFloat(dcOdds.toFixed(2)), rule: 'Rule 3' });
+  }
+
+  // BTTS as extra approved market if odds present
+  if(odds.bttsNo) approved.push({ market: 'BTTS No', odds: odds.bttsNo, rule: 'Market' });
+  if(odds.over25) approved.push({ market: 'Over 2.5', odds: odds.over25, rule: 'Market' });
+  if(odds.under25) approved.push({ market: 'Under 2.5', odds: odds.under25, rule: 'Market' });
+  if(odds.home1x2) approved.push({ market: 'Home Win', odds: odds.home1x2, rule: 'Market' });
+
+  return { approved, notes };
+}
+
+/* ---------------- SIMULATOR (10,000 run Monte Carlo) ---------------- */
+function runSimulator(match, weather){
+  const homeRank = match.homeRank || 10;
+  const awayRank = match.awayRank || 10;
+  const rankDiff = awayRank - homeRank; // positive = home is stronger (lower rank number)
+  const h2h = match.h2hCount || 0;
+
+  // Base strength skew from rank difference (capped)
+  let strengthSkew = Math.max(-0.25, Math.min(0.25, rankDiff * 0.01));
+
+  // Weather adjustment: heavy rain/wind slightly reduces goal expectancy
+  let weatherGoalAdj = 0;
+  if(weather){
+    if(weather.precipitation && weather.precipitation > 2) weatherGoalAdj -= 0.15;
+    if(weather.wind && weather.wind > 30) weatherGoalAdj -= 0.10;
+  }
+
+  const results = { home:0, draw:0, away:0, over25:0, under25:0, bttsYes:0, bttsNo:0 };
+
+  for(let i = 0; i < SIM_RUNS; i++){
+    // Simple Poisson-like goal generation biased by strength skew
+    const homeLambda = Math.max(0.4, 1.4 + strengthSkew + weatherGoalAdj);
+    const awayLambda = Math.max(0.4, 1.1 - strengthSkew + weatherGoalAdj);
+
+    const homeGoals = poissonRandom(homeLambda);
+    const awayGoals = poissonRandom(awayLambda);
+
+    if(homeGoals > awayGoals) results.home++;
+    else if(homeGoals < awayGoals) results.away++;
+    else results.draw++;
+
+    if(homeGoals + awayGoals > 2.5) results.over25++; else results.under25++;
+    if(homeGoals > 0 && awayGoals > 0) results.bttsYes++; else results.bttsNo++;
+  }
+
+  const pct = (n) => Math.round((n / SIM_RUNS) * 100);
+  return {
+    home: pct(results.home), draw: pct(results.draw), away: pct(results.away),
+    over25: pct(results.over25), under25: pct(results.under25),
+    bttsYes: pct(results.bttsYes), bttsNo: pct(results.bttsNo)
+  };
+}
+
+function poissonRandom(lambda){
+  let L = Math.exp(-lambda), k = 0, p = 1;
+  do{ k++; p *= Math.random(); } while(p > L);
+  return k - 1;
+}
+
+/* ---------------- COMPARISON / CONFIDENCE ---------------- */
+function confidenceLabel(pct){
+  if(pct >= 95) return 'Elite';
+  if(pct >= 90) return 'Very Safe';
+  if(pct >= 85) return 'Safe';
+  if(pct >= 80) return 'Moderate';
+  return 'Reject';
+}
+
+function combineResults(match, cpf, sim){
+  const candidates = [];
+
+  cpf.approved.forEach(a => {
+    if(a.odds < 1.30) return; // odds filter
+
+    // Try to find a matching simulator probability for agreement scoring
+    let simProb = null;
+    if(a.market === 'Over 1.5' || a.market === 'Over 2.5') simProb = sim.over25;
+    else if(a.market === 'Under 2.5') simProb = sim.under25;
+    else if(a.market === 'Home Win' || a.market === 'Home Double Chance' || a.market === 'Home Handicap 2:0') simProb = sim.home;
+    else if(a.market === 'BTTS No') simProb = sim.bttsNo;
+
+    const bookImplied = Math.round(impliedProb(a.odds) * 100);
+    let confidence = bookImplied;
+    if(simProb !== null){
+      confidence = Math.round((bookImplied + simProb) / 2);
+      if(Math.abs(bookImplied - simProb) > 25) confidence -= 10; // penalize strong disagreement
+    }
+
+    candidates.push({
+      market: a.market,
+      odds: a.odds,
+      confidence: Math.max(0, Math.min(99, confidence)),
+      label: confidenceLabel(confidence),
+      agreement: simProb !== null ? Math.abs(bookImplied - simProb) <= 15 : null
+    });
+  });
+
+  candidates.sort((a,b) => b.confidence - a.confidence);
+  return candidates.slice(0, 3);
+}
+
+/* ---------------- MAIN PIPELINE ---------------- */
+async function processAll(){
+  const raw = sessionStorage.getItem('babayaga_page1_data');
+  const matches = raw ? JSON.parse(raw) : [];
+
+  if(matches.length === 0){
+    setStatus('No match data found.<br>Returning to Page 1...');
+    setTimeout(()=> window.location.href = 'page1.html', 2000);
+    return;
+  }
+
+  const results = [];
+  const total = matches.length;
+
+  for(let i = 0; i < total; i++){
+    const match = matches[i];
+    setStatus(`Analyzing <b>${match.home} vs ${match.away}</b><br>(${i+1} of ${total})`);
+    setProgress(Math.round(((i) / total) * 100));
+    log(`Match ${i+1}: fetching weather...`);
+
+    const weather = await getWeather(match.venue || match.category, match.startTimestamp);
+    log(`Match ${i+1}: running ${SIM_RUNS.toLocaleString()} simulations...`);
+    const sim = runSimulator(match, weather);
+
+    let cpf = { approved: [], notes: ['No bookmaker file uploaded'] };
+    if(match.fileData && match.fileType === 'application/pdf'){
+      log(`Match ${i+1}: extracting odds from PDF...`);
+      const odds = await extractOddsFromPDF(match.fileData);
+      cpf = runCPF(odds);
+    } else if(match.fileData){
+      cpf.notes = ['Image upload — odds extraction from images not yet supported. Upload a PDF export for CPF analysis.'];
+    }
+
+    const topMarkets = combineResults(match, cpf, sim);
+
+    results.push({
+      slot: match.slot,
+      home: match.home,
+      away: match.away,
+      tournament: match.tournament,
+      simulator: sim,
+      weather: weather,
+      topMarkets: topMarkets,
+      notes: cpf.notes
+    });
+
+    log(`Match ${i+1}: done — ${topMarkets.length} qualifying market(s)`);
+  }
+
+  setProgress(100);
+  setStatus('Analysis complete. Loading results...');
+  sessionStorage.setItem('babayaga_page4_data', JSON.stringify(results));
+  setTimeout(()=> window.location.href = 'page4.html', 800);
+}
+
+window.addEventListener('load', processAll);
+</script>
+</body>
+</html>

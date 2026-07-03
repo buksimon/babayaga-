@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<link rel="icon" type="image/jpeg" href="logo.jpg">
+<link rel="apple-touch-icon" href="logo.jpg">
+<link rel="shortcut icon" href="logo.jpg">
+<link rel="manifest" href="manifest.json">
+<title>BABAYAGA - Results</title>
+<style>
+  :root{--green:#00ff66;--green-dim:#00cc55;--black:#000;--panel:#0a0f0c;--border:#163322;--grey:#7d9488;}
+  *{box-sizing:border-box;}
+  html,body{margin:0;background:var(--black);color:#fff;font-family:-apple-system,Segoe UI,Roboto,sans-serif;min-height:100vh;min-height:100dvh;}
+
+  .topbar{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--border);background:var(--panel);position:sticky;top:0;z-index:5;}
+  .icon-btn{width:36px;height:36px;border-radius:50%;border:1px solid var(--border);background:#0d1410;display:flex;align-items:center;justify-content:center;color:var(--green);font-size:18px;text-decoration:none;}
+  .brand b{color:var(--green);font-size:17px;letter-spacing:1.5px;}
+  .brand span{display:block;color:var(--grey);font-size:9px;letter-spacing:2px;margin-top:1px;}
+  .counter-pill{background:#0d1310;border:1px solid var(--border);border-radius:20px;padding:5px 12px;font-size:11px;color:var(--green);font-weight:700;}
+
+  .content{padding:14px 14px 40px;}
+  .filter-note{color:var(--grey);font-size:10px;text-align:center;margin-bottom:14px;}
+
+  .match-card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:12px;}
+  .match-head{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;}
+  .match-teams{font-size:15px;font-weight:700;}
+  .match-league{color:var(--grey);font-size:10px;margin-top:2px;}
+  .slot-badge{background:#0d1a12;border:1px solid var(--border);color:var(--grey);font-size:10px;padding:3px 8px;border-radius:6px;}
+
+  .market-row{display:flex;justify-content:space-between;align-items:center;padding:9px 10px;background:#050805;border:1px solid var(--border);border-radius:8px;margin-bottom:6px;}
+  .market-name{font-size:12px;color:#fff;font-weight:600;}
+  .market-right{display:flex;align-items:center;gap:8px;}
+  .market-odds{font-size:12px;color:var(--green);font-weight:700;}
+  .confidence-tag{font-size:9px;padding:3px 7px;border-radius:10px;font-weight:700;}
+  .conf-elite{background:rgba(0,255,102,.2);color:var(--green);border:1px solid var(--green);}
+  .conf-verysafe{background:rgba(0,255,102,.12);color:var(--green-dim);border:1px solid var(--green-dim);}
+  .conf-safe{background:rgba(255,193,7,.12);color:#ffc107;border:1px solid #ffc107;}
+  .conf-moderate{background:rgba(255,140,0,.12);color:#ff8c00;border:1px solid #ff8c00;}
+
+  .no-markets{color:var(--grey);font-size:11px;text-align:center;padding:10px 0;}
+  .notes{color:#4a5a50;font-size:10px;margin-top:8px;font-style:italic;}
+
+  .empty-state{text-align:center;color:var(--grey);font-size:13px;margin-top:60px;line-height:1.7;padding:0 20px;}
+  .restart-btn{display:block;width:100%;padding:14px;margin-top:20px;border:1px solid var(--green);border-radius:10px;background:transparent;color:var(--green);font-weight:700;font-size:13px;text-align:center;text-decoration:none;}
+
+  ::-webkit-scrollbar{width:0;}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <a href="page1.html" class="icon-btn">&#8962;</a>
+  <div class="brand" style="text-align:center;"><b>BABAYAGA</b><span>FINAL RESULTS</span></div>
+  <div class="counter-pill" id="counterPill">0 matches</div>
+</div>
+
+<div class="content">
+  <div class="filter-note">Showing top 3 markets per match &middot; minimum odds 1.30</div>
+  <div id="results"></div>
+</div>
+
+<script>
+function confClass(label){
+  if(label === 'Elite') return 'conf-elite';
+  if(label === 'Very Safe') return 'conf-verysafe';
+  if(label === 'Safe') return 'conf-safe';
+  return 'conf-moderate';
+}
+
+function render(){
+  const raw = sessionStorage.getItem('babayaga_page4_data');
+  const results = raw ? JSON.parse(raw) : [];
+  const wrap = document.getElementById('results');
+
+  if(results.length === 0){
+    wrap.innerHTML = `<div class="empty-state">No results available.<br>Start a new analysis from Page 1.
+      <a href="page1.html" class="restart-btn">START NEW ANALYSIS</a></div>`;
+    return;
+  }
+
+  document.getElementById('counterPill').textContent = `${results.length} match${results.length !== 1 ? 'es' : ''}`;
+
+  let html = '';
+  results.forEach(r => {
+    html += `
+    <div class="match-card">
+      <div class="match-head">
+        <div>
+          <div class="match-teams">${r.home} vs ${r.away}</div>
+          <div class="match-league">${r.tournament || ''}</div>
+        </div>
+        <div class="slot-badge">#${r.slot}</div>
+      </div>`;
+
+    if(r.topMarkets && r.topMarkets.length > 0){
+      r.topMarkets.forEach(m => {
+        html += `
+        <div class="market-row">
+          <div class="market-name">${m.market}</div>
+          <div class="market-right">
+            <span class="market-odds">${m.odds.toFixed(2)}</span>
+            <span class="confidence-tag ${confClass(m.label)}">${m.label} ${m.confidence}%</span>
+          </div>
+        </div>`;
+      });
+    } else {
+      html += `<div class="no-markets">No markets met the odds/confidence filter for this match</div>`;
+    }
+
+    if(r.notes && r.notes.length){
+      html += `<div class="notes">${r.notes.join(' &middot; ')}</div>`;
+    }
+
+    html += `</div>`;
+  });
+
+  html += `<a href="page1.html" class="restart-btn">START NEW ANALYSIS</a>`;
+  wrap.innerHTML = html;
+}
+
+render();
+</script>
+</body>
+</html>
