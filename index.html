@@ -1,0 +1,698 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>BABAYAGA</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#00ff66">
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<style>
+  :root{
+    --bg:#000000;
+    --green:#00ff66;
+    --green-dim:#00ff6633;
+    --panel:#0d0d0d;
+    --border:#1a1a1a;
+    --text:#e6e6e6;
+    --muted:#8a8a8a;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    background:var(--bg);
+    color:var(--text);
+    font-family:'Courier New', monospace;
+    min-height:100vh;
+  }
+  .screen{display:none;padding:24px 18px 60px;min-height:100vh;}
+  .screen.active{display:block;}
+
+  h1.brand{
+    color:var(--green);
+    letter-spacing:4px;
+    font-size:28px;
+    margin:10px 0 4px;
+    text-align:center;
+  }
+  .sub{
+    text-align:center;
+    color:var(--muted);
+    font-size:12px;
+    letter-spacing:2px;
+    margin-bottom:32px;
+  }
+
+  .upload-box{
+    border:2px dashed var(--green-dim);
+    border-radius:10px;
+    padding:28px 16px;
+    text-align:center;
+    margin-bottom:16px;
+  }
+  .upload-box.filled{border-color:var(--green);}
+  .upload-box p{color:var(--muted);font-size:13px;margin:6px 0 0;}
+
+  input[type=file]{display:none;}
+
+  .btn{
+    display:block;
+    width:100%;
+    padding:14px;
+    background:var(--green);
+    color:#000;
+    border:none;
+    border-radius:8px;
+    font-weight:bold;
+    font-size:15px;
+    letter-spacing:1px;
+    margin-top:14px;
+    cursor:pointer;
+  }
+  .btn:disabled{
+    background:#1a1a1a;
+    color:#555;
+  }
+  .btn.secondary{
+    background:transparent;
+    color:var(--green);
+    border:1px solid var(--green);
+  }
+
+  #uploadStatus{margin-top:14px;font-size:13px;color:var(--muted);}
+  .slot{
+    display:flex;justify-content:space-between;align-items:center;
+    padding:10px 12px;border:1px solid var(--border);border-radius:6px;
+    margin-bottom:8px;font-size:13px;
+  }
+  .slot.ok{border-color:var(--green);color:var(--green);}
+  .slot.bad{border-color:#ff4444;color:#ff4444;}
+
+  /* Loading screen */
+  .stage-list{max-width:400px;margin:60px auto;}
+  .stage{
+    padding:14px 16px;border:1px solid var(--border);border-radius:8px;
+    margin-bottom:12px;color:var(--muted);font-size:14px;
+    display:flex;align-items:center;gap:10px;
+  }
+  .stage.active{border-color:var(--green);color:var(--green);}
+  .stage.done{border-color:var(--green);color:var(--green);opacity:0.6;}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--muted);flex-shrink:0;}
+  .stage.active .dot{background:var(--green);box-shadow:0 0 8px var(--green);}
+  .stage.done .dot{background:var(--green);}
+
+  /* Results */
+  .result-card{
+    border:1px solid var(--border);
+    border-left:4px solid var(--green);
+    border-radius:6px;
+    padding:14px 16px;
+    margin-bottom:10px;
+  }
+  .result-card .market{font-size:12px;color:var(--muted);letter-spacing:1px;text-transform:uppercase;}
+  .result-card .pick{font-size:18px;color:var(--green);font-weight:bold;margin-top:4px;}
+  .result-card .pct{float:right;color:var(--text);}
+
+  .error-box{
+    border:1px solid #ff4444;color:#ff4444;padding:12px;border-radius:6px;
+    font-size:13px;margin-bottom:14px;
+  }
+</style>
+</head>
+<body>
+
+<!-- SCREEN 1: UPLOAD -->
+<div class="screen active" id="screen-upload">
+  <h1 class="brand">BABAYAGA</h1>
+  <div class="sub">GOAL PREDICTION ENGINE</div>
+
+  <div class="upload-box" id="convertBox">
+    <p style="margin-bottom:10px;">Convert match URL to PDF</p>
+    <input type="text" id="urlInput" placeholder="Paste SportyBet match URL"
+      style="width:100%;padding:10px;background:#0d0d0d;border:1px solid #1a1a1a;color:#e6e6e6;border-radius:6px;font-size:13px;">
+  </div>
+  <button class="btn secondary" id="convertBtn">Convert to PDF</button>
+  <div id="convertStatus" style="margin-bottom:20px;font-size:13px;color:var(--muted);"></div>
+
+  <div class="upload-box" id="uploadBox">
+    <div id="uploadIcon">📷</div>
+    <p>Upload both screenshots<br>(odds board + correct score grid)</p>
+  </div>
+  <input type="file" id="fileInput" accept="image/*" multiple>
+  <button class="btn secondary" id="pickBtn">Upload Screenshots</button>
+
+  <div id="uploadStatus"></div>
+
+  <button class="btn" id="analyzeBtn" disabled>Analyze</button>
+</div>
+
+<!-- SCREEN 2: LOADING -->
+<div class="screen" id="screen-loading">
+  <h1 class="brand">BABAYAGA</h1>
+  <div class="stage-list">
+    <div class="stage" id="stage1"><span class="dot"></span> Extracting data from images...</div>
+    <div class="stage" id="stage2"><span class="dot"></span> Converting odds to percentages...</div>
+    <div class="stage" id="stage3"><span class="dot"></span> Running simulation...</div>
+  </div>
+</div>
+
+<!-- SCREEN 3: RESULTS -->
+<div class="screen" id="screen-results">
+  <h1 class="brand">BABAYAGA</h1>
+  <div class="sub">TOP PICKS</div>
+  <div id="resultsList"></div>
+  <button class="btn secondary" id="resetBtn">New Analysis</button>
+</div>
+
+<script>
+/* ============================================================
+   SERVICE WORKER REGISTRATION
+============================================================ */
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('service-worker.js').catch(()=>{});
+  });
+}
+
+/* ============================================================
+   STATE
+============================================================ */
+let uploadedFiles = []; // {file, kind: 'odds'|'score'|null, text}
+
+/* ============================================================
+   ILOVEAPI: HTML (URL) -> PDF CONVERTER
+============================================================ */
+const ILOVEAPI_PUBLIC_KEY = "project_public_435c37dac7fae911c837a1963c88d8eb_kr1d61388b7bc5ac7169fc3b302fc77851a0c";
+
+async function ilovepdfAuth() {
+  const res = await fetch("https://api.ilovepdf.com/v1/auth", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ public_key: ILOVEAPI_PUBLIC_KEY })
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error("Auth failed: " + (data.error?.message || res.status));
+  return data.token;
+}
+
+async function ilovepdfStartTask(token) {
+  const res = await fetch("https://api.ilovepdf.com/v1/start/htmlpdf", {
+    method: "GET",
+    headers: { "Authorization": "Bearer " + token }
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error("Start task failed: " + (data.error?.message || res.status));
+  return data; // { server, task }
+}
+
+async function ilovepdfUploadUrl(token, server, task, pageUrl) {
+  const encodedUrl = encodeURI(pageUrl.trim());
+  const res = await fetch(`https://${server}/v1/upload`, {
+    method: "POST",
+    headers: {
+      "Authorization": "Bearer " + token,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ task: task, cloud_file: encodedUrl })
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error("Upload failed: " + (data.error?.message || res.status));
+  return data.server_filename;
+}
+
+async function ilovepdfProcess(token, server, task, serverFilename) {
+  const res = await fetch(`https://${server}/v1/process`, {
+    method: "POST",
+    headers: {
+      "Authorization": "Bearer " + token,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      task: task,
+      tool: "htmlpdf",
+      files: [{ server_filename: serverFilename, filename: "match.pdf" }]
+    })
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error("Process failed: " + (data.error?.message || res.status));
+  return data;
+}
+
+async function ilovepdfDownload(token, server, task) {
+  const res = await fetch(`https://${server}/v1/download/${task}`, {
+    method: "GET",
+    headers: { "Authorization": "Bearer " + token }
+  });
+  if (!res.ok) throw new Error("Download failed: " + res.status);
+  return res.blob();
+}
+
+async function convertUrlToPdf(pageUrl) {
+  const token = await ilovepdfAuth();
+  const { server, task } = await ilovepdfStartTask(token);
+  const serverFilename = await ilovepdfUploadUrl(token, server, task, pageUrl);
+  await ilovepdfProcess(token, server, task, serverFilename);
+  return ilovepdfDownload(token, server, task);
+}
+
+document.getElementById('convertBtn').addEventListener('click', async () => {
+  const url = document.getElementById('urlInput').value.trim();
+  const status = document.getElementById('convertStatus');
+  if (!url) { status.textContent = 'Paste a match URL first.'; return; }
+  status.textContent = 'Converting...';
+  try {
+    const blob = await convertUrlToPdf(url);
+    const downloadUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = downloadUrl;
+    a.download = 'match.pdf';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    status.textContent = 'Done — PDF downloaded.';
+  } catch (err) {
+    status.textContent = 'Error: ' + err.message;
+  }
+});
+
+/* ============================================================
+   SCREEN NAV
+============================================================ */
+function showScreen(id){
+  document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+}
+
+/* ============================================================
+   UPLOAD HANDLING
+============================================================ */
+const pickBtn = document.getElementById('pickBtn');
+const fileInput = document.getElementById('fileInput');
+const analyzeBtn = document.getElementById('analyzeBtn');
+const uploadStatus = document.getElementById('uploadStatus');
+const uploadBox = document.getElementById('uploadBox');
+
+pickBtn.addEventListener('click', () => fileInput.click());
+
+fileInput.addEventListener('change', async (e) => {
+  const files = Array.from(e.target.files).slice(0,2);
+  if(files.length === 0) return;
+  uploadedFiles = files.map(f => ({file:f, kind:null, text:''}));
+  uploadBox.classList.add('filled');
+  uploadStatus.innerHTML = `<div class="slot">Loaded ${files.length} image(s). Tap Analyze to classify &amp; process.</div>`;
+  analyzeBtn.disabled = files.length < 2;
+  if(files.length < 2){
+    uploadStatus.innerHTML += `<div class="slot bad">Need both screenshots (odds board + correct score).</div>`;
+  }
+});
+
+document.getElementById('resetBtn').addEventListener('click', () => {
+  uploadedFiles = [];
+  fileInput.value = '';
+  uploadBox.classList.remove('filled');
+  uploadStatus.innerHTML = '';
+  analyzeBtn.disabled = true;
+  showScreen('screen-upload');
+});
+
+/* ============================================================
+   ANALYZE PIPELINE
+============================================================ */
+analyzeBtn.addEventListener('click', runPipeline);
+
+async function runPipeline(){
+  showScreen('screen-loading');
+  setStage(1,'active');
+
+  try{
+    // ---- STAGE 1: OCR + classify ----
+    for(const item of uploadedFiles){
+      item.text = await ocrImage(item.file);
+      item.kind = classifyText(item.text);
+    }
+
+    const oddsItem = uploadedFiles.find(i=>i.kind==='odds');
+    const scoreItem = uploadedFiles.find(i=>i.kind==='score');
+
+    if(!oddsItem || !scoreItem){
+      showError("Unrecognized image — please re-upload. Make sure one screenshot is the full odds board and the other is the correct score grid.");
+      return;
+    }
+
+    setStage(1,'done'); setStage(2,'active');
+
+    // ---- STAGE 2: parse + de-vig ----
+    const oddsData = parseOddsBoard(oddsItem.text);
+    const scoreData = parseCorrectScore(scoreItem.text);
+    const deVigged = deVigAll(oddsData, scoreData);
+
+    setStage(2,'done'); setStage(3,'active');
+
+    // ---- STAGE 3: fit lambdas + simulate ----
+    const {lambdaHome, lambdaAway} = fitLambdas(deVigged.scoreGrid);
+    const simResults = runMonteCarlo(lambdaHome, lambdaAway, 10000);
+
+    setStage(3,'done');
+
+    const picks = buildBinaryPicks(simResults);
+    renderResults(picks, lambdaHome, lambdaAway);
+
+    setTimeout(()=>showScreen('screen-results'), 400);
+
+  } catch(err){
+    showError("Something went wrong processing the images: " + err.message);
+  }
+}
+
+function setStage(n, state){
+  const el = document.getElementById('stage'+n);
+  el.classList.remove('active','done');
+  if(state) el.classList.add(state);
+}
+
+function showError(msg){
+  showScreen('screen-upload');
+  uploadStatus.innerHTML = `<div class="error-box">${msg}</div>`;
+}
+
+/* ============================================================
+   OCR
+============================================================ */
+async function ocrImage(file){
+  const result = await Tesseract.recognize(file, 'eng');
+  return result.data.text;
+}
+
+/* ============================================================
+   CLASSIFY SCREENSHOT TYPE (fingerprint rules)
+============================================================ */
+function classifyText(text){
+  const t = text.replace(/\s+/g,' ');
+  const hasOddsFingerprint = /GG\s*\/?\s*NG/i.test(t) && /Handicap/i.test(t) && /Double\s*Chance/i.test(t);
+  const scoreCount = (t.match(/\d\s*:\s*\d/g) || []).length;
+  const hasScoreFingerprint = /Other/i.test(t) && scoreCount >= 5;
+
+  if(hasOddsFingerprint) return 'odds';
+  if(hasScoreFingerprint) return 'score';
+  return null;
+}
+
+/* ============================================================
+   PARSE: ODDS BOARD
+============================================================ */
+function numbersBetween(text, startLabel, endLabel){
+  const t = text;
+  const startIdx = t.search(new RegExp(startLabel, 'i'));
+  if(startIdx === -1) return [];
+  let sub = t.slice(startIdx);
+  if(endLabel){
+    const endIdx = sub.search(new RegExp(endLabel, 'i'));
+    if(endIdx > 0) sub = sub.slice(0, endIdx);
+  }
+  const matches = sub.match(/\d+\.\d+/g) || [];
+  return matches.map(Number);
+}
+
+function pairUp(numbers){
+  const pairs = [];
+  for(let i=0;i<numbers.length;i+=2){
+    if(numbers[i+1] !== undefined) pairs.push([numbers[i], numbers[i+1]]);
+    else pairs.push([numbers[i], null]); // locked/unavailable under
+  }
+  return pairs;
+}
+
+function parseOddsBoard(text){
+  const data = {};
+
+  // 1X2
+  const oneXTwo = numbersBetween(text, '1X2', 'O/?U');
+  data.oneXTwo = oneXTwo.slice(0,3); // [home, draw, away]
+
+  // Match O/U (0.5 - 9.5)
+  const matchOU = numbersBetween(text, '\\bO/?U\\b', '1st Half - Over');
+  data.matchOU = pairUp(matchOU);
+  data.matchOULines = [0.5,1.5,2.5,3.5,4.5,5.5,6.5,7.5,8.5,9.5];
+
+  // Home Team O/U
+  const homeOU = numbersBetween(text, 'Home Team Over', 'Away Team Over');
+  data.homeOU = pairUp(homeOU);
+  data.teamOULines = [0.5,1.5,2.5,3.5,4.5];
+
+  // Away Team O/U
+  const awayOU = numbersBetween(text, 'Away Team Over', 'Double Chance');
+  data.awayOU = pairUp(awayOU);
+
+  // GG/NG
+  const gg = numbersBetween(text, 'GG\\s*/?\\s*NG', 'Handicap');
+  data.ggng = gg.slice(0,2); // [yes, no]
+
+  // Handicap (6 lines x 3 = 18 numbers ideally)
+  const hcap = numbersBetween(text, '\\bHandicap\\b', 'Correct Score|1st Half - 1X2');
+  const hcapTriples = [];
+  for(let i=0;i<hcap.length;i+=3){
+    if(hcap[i+2] !== undefined) hcapTriples.push([hcap[i],hcap[i+1],hcap[i+2]]);
+  }
+  data.handicap = hcapTriples;
+
+  return data;
+}
+
+/* ============================================================
+   PARSE: CORRECT SCORE GRID
+============================================================ */
+function parseCorrectScore(text){
+  const cleaned = text.replace(/\s+/g,' ');
+  const grid = {};
+  const re = /(\d)\s*:\s*(\d)\D{0,10}?(\d+\.\d+)/g;
+  let m;
+  while((m = re.exec(cleaned)) !== null){
+    const h = parseInt(m[1],10), a = parseInt(m[2],10), odds = parseFloat(m[3]);
+    if(h<=4 && a<=4){
+      grid[h+':'+a] = odds;
+    }
+  }
+  // Other bucket
+  const otherMatch = cleaned.match(/Other\D{0,10}?(\d+\.\d+)/i);
+  const other = otherMatch ? parseFloat(otherMatch[1]) : null;
+
+  return {grid, other};
+}
+
+/* ============================================================
+   DE-VIG
+============================================================ */
+function deVigArray(oddsArr){
+  const raw = oddsArr.map(o => (o && o>0) ? 1/o : 0);
+  const sum = raw.reduce((a,b)=>a+b,0);
+  if(sum===0) return raw.map(()=>0);
+  return raw.map(r=>r/sum);
+}
+
+function deVigAll(oddsData, scoreData){
+  const result = {};
+
+  if(oddsData.oneXTwo.length===3) result.oneXTwo = deVigArray(oddsData.oneXTwo);
+
+  result.matchOU = oddsData.matchOU.map(([over,under])=>{
+    if(under===null) return [null,null];
+    return deVigArray([over,under]);
+  });
+
+  result.homeOU = oddsData.homeOU.map(([over,under])=>{
+    if(under===null) return [null,null];
+    return deVigArray([over,under]);
+  });
+
+  result.awayOU = oddsData.awayOU.map(([over,under])=>{
+    if(under===null) return [null,null];
+    return deVigArray([over,under]);
+  });
+
+  if(oddsData.ggng.length===2) result.ggng = deVigArray(oddsData.ggng);
+
+  // Correct score grid de-vig (all cells + Other together)
+  const scores = Object.keys(scoreData.grid);
+  const oddsList = scores.map(k=>scoreData.grid[k]);
+  if(scoreData.other) oddsList.push(scoreData.other);
+  const probs = deVigArray(oddsList);
+  const scoreGrid = {};
+  scores.forEach((k,i)=> scoreGrid[k] = probs[i]);
+  const otherProb = scoreData.other ? probs[probs.length-1] : null;
+
+  result.scoreGrid = scoreGrid;
+  result.otherProb = otherProb;
+
+  return result;
+}
+
+/* ============================================================
+   POISSON HELPERS
+============================================================ */
+function factorial(n){
+  let f=1; for(let i=2;i<=n;i++) f*=i; return f;
+}
+function poissonPMF(k, lambda){
+  return Math.exp(-lambda) * Math.pow(lambda,k) / factorial(k);
+}
+
+/* ============================================================
+   MLE (LEAST SQUARES) FIT OF LAMBDA_HOME, LAMBDA_AWAY
+   against de-vigged correct score grid
+============================================================ */
+function gridLoss(lambdaHome, lambdaAway, scoreGrid, otherProb){
+  let loss = 0;
+  let sumGrid = 0;
+  for(let h=0; h<=4; h++){
+    for(let a=0; a<=4; a++){
+      const key = h+':'+a;
+      const modelP = poissonPMF(h,lambdaHome) * poissonPMF(a,lambdaAway);
+      sumGrid += modelP;
+      const trueP = scoreGrid[key];
+      if(trueP !== undefined){
+        loss += Math.pow(modelP - trueP, 2);
+      }
+    }
+  }
+  if(otherProb !== null && otherProb !== undefined){
+    const modelOther = 1 - sumGrid;
+    loss += Math.pow(modelOther - otherProb, 2);
+  }
+  return loss;
+}
+
+function fitLambdas(scoreGrid, otherProb){
+  let best = {lambdaHome:1.3, lambdaAway:1.1, loss:Infinity};
+
+  // Coarse search
+  for(let lh=0.2; lh<=5; lh+=0.1){
+    for(let la=0.2; la<=5; la+=0.1){
+      const loss = gridLoss(lh, la, scoreGrid, otherProb);
+      if(loss < best.loss) best = {lambdaHome:lh, lambdaAway:la, loss};
+    }
+  }
+  // Fine search around best
+  const centerH = best.lambdaHome, centerA = best.lambdaAway;
+  for(let lh=Math.max(0.05,centerH-0.15); lh<=centerH+0.15; lh+=0.01){
+    for(let la=Math.max(0.05,centerA-0.15); la<=centerA+0.15; la+=0.01){
+      const loss = gridLoss(lh, la, scoreGrid, otherProb);
+      if(loss < best.loss) best = {lambdaHome:lh, lambdaAway:la, loss};
+    }
+  }
+  return best;
+}
+
+/* ============================================================
+   MONTE CARLO SIMULATION
+============================================================ */
+function samplePoisson(lambda){
+  // Knuth's algorithm
+  const L = Math.exp(-lambda);
+  let k = 0, p = 1;
+  do{
+    k++;
+    p *= Math.random();
+  } while(p > L);
+  return k-1;
+}
+
+function runMonteCarlo(lambdaHome, lambdaAway, runs){
+  const totalOUCounts = {}; // line -> {over,under}
+  const homeOUCounts = {};
+  const awayOUCounts = {};
+  let ggCount = 0;
+
+  const totalLines = [0.5,1.5,2.5,3.5,4.5,5.5,6.5,7.5,8.5,9.5];
+  const teamLines = [0.5,1.5,2.5,3.5,4.5];
+  totalLines.forEach(l=>totalOUCounts[l]={over:0,under:0});
+  teamLines.forEach(l=>{homeOUCounts[l]={over:0,under:0}; awayOUCounts[l]={over:0,under:0};});
+
+  for(let i=0;i<runs;i++){
+    const h = samplePoisson(lambdaHome);
+    const a = samplePoisson(lambdaAway);
+    const total = h+a;
+
+    totalLines.forEach(l=>{
+      if(total > l) totalOUCounts[l].over++; else totalOUCounts[l].under++;
+    });
+    teamLines.forEach(l=>{
+      if(h > l) homeOUCounts[l].over++; else homeOUCounts[l].under++;
+      if(a > l) awayOUCounts[l].over++; else awayOUCounts[l].under++;
+    });
+    if(h>0 && a>0) ggCount++;
+  }
+
+  const toProb = (counts) => {
+    const out = {};
+    Object.keys(counts).forEach(l=>{
+      out[l] = {
+        over: counts[l].over/runs,
+        under: counts[l].under/runs
+      };
+    });
+    return out;
+  };
+
+  return {
+    matchOU: toProb(totalOUCounts),
+    homeOU: toProb(homeOUCounts),
+    awayOU: toProb(awayOUCounts),
+    gg: ggCount/runs,
+    ng: 1 - (ggCount/runs)
+  };
+}
+
+/* ============================================================
+   BUILD BINARY MARKET PICKS (highest % per market, sorted)
+============================================================ */
+function buildBinaryPicks(sim){
+  const picks = [];
+
+  Object.keys(sim.matchOU).forEach(line=>{
+    const {over,under} = sim.matchOU[line];
+    if(over>=under) picks.push({market:`Match Total Over/Under ${line}`, pick:`Over ${line}`, prob:over});
+    else picks.push({market:`Match Total Over/Under ${line}`, pick:`Under ${line}`, prob:under});
+  });
+
+  Object.keys(sim.homeOU).forEach(line=>{
+    const {over,under} = sim.homeOU[line];
+    if(over>=under) picks.push({market:`Home Team Over/Under ${line}`, pick:`Over ${line}`, prob:over});
+    else picks.push({market:`Home Team Over/Under ${line}`, pick:`Under ${line}`, prob:under});
+  });
+
+  Object.keys(sim.awayOU).forEach(line=>{
+    const {over,under} = sim.awayOU[line];
+    if(over>=under) picks.push({market:`Away Team Over/Under ${line}`, pick:`Over ${line}`, prob:over});
+    else picks.push({market:`Away Team Over/Under ${line}`, pick:`Under ${line}`, prob:under});
+  });
+
+  picks.push({
+    market:'Both Teams To Score',
+    pick: sim.gg>=sim.ng ? 'Yes' : 'No',
+    prob: Math.max(sim.gg, sim.ng)
+  });
+
+  picks.sort((a,b)=>b.prob - a.prob);
+  return picks;
+}
+
+/* ============================================================
+   RENDER RESULTS
+============================================================ */
+function renderResults(picks, lambdaHome, lambdaAway){
+  const list = document.getElementById('resultsList');
+  list.innerHTML = '';
+
+  picks.forEach(p=>{
+    const div = document.createElement('div');
+    div.className = 'result-card';
+    div.innerHTML = `
+      <div class="market">${p.market} <span class="pct">${(p.prob*100).toFixed(1)}%</span></div>
+      <div class="pick">${p.pick}</div>
+    `;
+    list.appendChild(div);
+  });
+}
+</script>
+</body>
+</html>
